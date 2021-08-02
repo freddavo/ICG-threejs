@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>ColorPlay</title>
+		<style>
+			body {box-sizing:border-box; overflow-x:hidden;margin: 0; position: relative;}#timer{position:absolute;left:0;top:0;padding:10px;font-family:sans-serif;font-size:20px;background-color:#ffffffaf;border-radius:0 0 10px 0}#steps{position:absolute;right:0;top:0;padding:10px;font-family:sans-serif;font-size:20px;background-color:#ffffffaf;border-radius:0 0 0 10px}#helper{position:absolute;width:100%;bottom:0;text-align:center;font-family:sans-serif;font-size:15px;background-color:#ffffffaf;padding-top:20px;padding-bottom:10px;padding-left:10px;padding-right:10px}#level{position:absolute;font-family:sans-serif;font-size:22px;color:#222;text-align:center;padding-top:20px;width:100% ;}
+		</style>
+	</head>
+	<body>
+        <div id="timer">00:00</div>
+        <div id="steps">25</div>
+        <div id="level">Fase 1</div>
+        <div id="helper">Chegue até ao bloco branco alternando os blocos coloridos ativos... o preto e o branco permanecem<br/><br/>Controlos<br/><b>R - Ativa bloco vermelho | G - Ativa o bloco verde | B - Ativa o bloco Azul</b></div>
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.js" integrity="sha512-NLtnLBS9Q2w7GKK9rKxdtgL7rA7CAS85uC/0xd9im4J/yOL4F9ZVlv634NAM7run8hz3wI2GabaA6vv8vJtHiQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+        <script>
+            
+            //Configuração da Cena do THREE js
+            const scene = new THREE.Scene();
+
+            //Criação da camara perspectiva do THREE js
+            const camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 0.1, 1000 );    
+
+            //Background da Cena
+            scene.background = new THREE.Color( 0x98e8eb );
+
+            //Criação do renderizador WEBGL
+            const renderer = new THREE.WebGLRenderer();
+
+            //Definição do tamanho do renderizador WEBGL
+            renderer.setSize( window.innerWidth, window.innerHeight );
+            
+            //Inserir o renderizador WEBGL no html
+            document.body.appendChild( renderer.domElement );
+
+            //Ativação da sombra no WebGL
+            renderer.shadowMap.enabled = true;
+			renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+            //Variáveis pra editar os elementos HTML da UI
+            var stepsHolder = document.getElementById("steps");
+            var timerHolder = document.getElementById("timer");
+            var levelHolder = document.getElementById("level");
+            
+            //Configuração de variáveis para a lógica de jogo
+            //Variável que vai armazenar a função que conta o tempo
+            var timerInterval;  
+            //Variável que controla qual é a fase atual
+            var fase = 1;
+            //Variável que controla se a lógica de jogo pode acontecer
+            var game = false;
+            //Variável que armazena a quantidade de passos dados na fase
+            var steps = 0;
+            //Variável que armazena o tempo, em segundos, caso passe de 60 o jogador perder(em cada nivel/fase)
+            var time = 0;
+            //Variável que define se o jogador está "em contato com o chão"
+            var grounded = false;
+            //Variável que define qual a cor de blocos que está ativa
+            var activeLayer;
+            //Variável que armazena os objetos adicionados a cena, exceto as luzes
+            var sceneObj = {blue:[],red:[],green:[],black:[]};
+            //Variável que controla a posição do jogador no Mundo
+            var playerPos = {
+                x : 0 - 0.5,
+                z : 0 - 0.5,
+                y : 2
+            };
+            //Variável que define as cores de cada camada
+            var colors = {
+                'red' : 0xff0000,
+                'blue' : 0x0000ff,    
+                'green' : 0x00ff00,
+                'black' : 0x222222,
+                'white' : 0xffffff,
+            }
+
+            //Função que configura as luzes na cena
+            function setupLight(){
+                  
+                //Criação de luz ambiente indireta na cena
+                const ambientLight = new THREE.AmbientLight( 0xffffff, 0.5 );
+                //adiciona a luz na cena
+                scene.add( ambientLight );
+
+                //Criação de luz direta para gerar sombras 
+                const directionalLight = new THREE.DirectionalLight( 0xffffff, 0.3 );
+                //Definição da posição da luz direta no eixo Y
+                directionalLight.position.y = 50;
+                //Definição da posição da luz direta no eixo X
+                directionalLight.position.x = 0;
+                //Definição da posição da luz direta no eixo Z
+                directionalLight.position.z = 0;
+                //Configuração para que a luz direta projete sombras
+                directionalLight.castShadow = true;
+                //Configuração dos mapas para sombra seguindo as regras do three js
+                directionalLight.shadow.mapSize.width = 512;
+                directionalLight.shadow.mapSize.height = 512;
+                //Simulação de camara ortográfica para a projeção das sombras
+                directionalLight.shadow.camera = new THREE.OrthographicCamera( -100, 100, 100, -100, 0.5, 1000 ); 
+                //Inserir luz na cena
+                scene.add( directionalLight );
+
+            }
+
+            //Chamar a função para a  configuração das luzes na cena
+            setupLight();
+
+            //Função auxiliar que arrenonda o numero para o valor mais próximo de um múltiplo de 0.5
+            function arred(x){
+                x= Math.round(x/0.5)*0.5;
+                return x
+            }
+
+            //Função auxiliar que define qual cor de blocos está ativa
+            function setLayer(x){
+                //Define a variável com que cor está ativa
+                activeLayer = x;
+
+                //Atráves deste for, passamos por cada elemento que foi adicionado na cena, na variável 'sceneObj' e armazenamos numa variável auxiliar : 'b'
+                for(var obj in sceneObj){
+                    var b = sceneObj[obj];
+
+                    //Aqui, verificamos se o item atual do for, é um array ou é um objeto único: jogador ou o bloco branco de fim da fase
+                    if(b == undefined || b.length == 0 || b.length == undefined){
+                        //Se não for um array, ele retorna e sai da função
+                        return ;
+                    }
+                    
+                    //Se for um array, passamos por cada item do array para deixar com transparencia os blocos que não estão ativos
+                    b.map((a) => {
+
+                        //Aqui verificamos se o bloco não é branco ou preto, se não for, continuamos com a verificação 
+                        if(a.layer != "white" && a.layer != "black"){
+                            //Se a cor do objeto não for a cor ativa, deixamos o bloco com 0.2 de opacidade
+                            //Verificamos a cor ativa, baseado na definição de "camada" que criamos quando  instanciamos o objeto
+                            if(a.layer != activeLayer){
+                                a.material.opacity = 0.2;
+                            }else{
+                            //Se a cor do objeto for a cor ativa, deixamos o bloco com 1 de opacidade
+                                a.material.opacity = 1;
+                            }
+                        }
+                    });
+                }
+            }
+
+            //Nesta função instanciamos os objetos passando as seguintes variáveis para a função
+            //geo - um objeto javascript, no padrão {x,y,z}, que usaremos para definir o tamanho do bloco
+            //color - uma string, onde definiremos qual a cor que está ativa
+            //pos - um objeto javascript, no padrão {x,y,z}, que usaremos para definir a posição do bloco no mundo
+            //name - aqui definiremos o nome do objeto na cena
+            function createObj(geo,color,pos,name){
+                //Aqui usamos uma função padrão do THREE js para criar a geometria do cubo, de acordo com o tamanho no eixo X, Y e Z
+                var geo = new THREE.BoxGeometry(geo.x,geo.y,geo.z);
+                //Aqui usamos uma função padrão do THREE js para criar o material e shader do cubo, também definimos que o material tem transparencia, e atribuimos cor de acordo com a cor que recebemos a função, para definir a cor no objeto usamos o objeto javascript auxiliar 'colors'
+                var mat = new THREE.MeshStandardMaterial({
+                    color: colors[color],
+                    transparent : true
+                });
+                //Aqui usamos uma função padrão do THREE js para criar o objeto 
+                var obj = new THREE.Mesh(geo,mat);
+                //Definimos que o objeto vai projetar e receber sombras
+                obj.castShadow = true;
+                obj.receiveShadow = true;
+                //Definimos a cor do objeto na variável Layer, para consultar na função SetLayer
+                obj.layer = color;
+                //Definimos o nome do objeto na cena
+                obj.name = name;
+
+                //Aqui definimos a posição que o objeto vai ter na cena
+                obj.position.set(pos.x,pos.y,pos.z);
+
+                //Retorna o objeto 
+                return obj;
+            }
+
+            //interação do jogador com as setas
+            document.addEventListener('keydown',function(e){
+                //tecla pra cima
+                if(e.keyCode == "38"){
+                    playerPos.z += -1;
+                    steps++;
+                }
+                //tecla pra direita
+                if(e.keyCode == "39"){
+                    playerPos.x += 1;
+                    steps++;
+                }
+                //tecla pra tras
+                if(e.keyCode == "37"){
+                    playerPos.x += -1;
+                    steps++;
+                }
+                //tecla pra baixo
+                if(e.keyCode == "40"){
+                    playerPos.z += 1;
+                    steps++;
+                }
+                //tecla B para alteração da cor ativa pra azul
+                if(e.keyCode == "66"){
+                    setLayer('blue');
+                }
+                //tecla R para alteração da cor ativa pra vermelha
+                if(e.keyCode == "82"){
+                    setLayer('red');
+                }
+                //tecla G para alteração da cor ativa pra verde
+                if(e.keyCode == "71"){
+                    setLayer('green');
+                }
+                //tecla espaço para reiniciar
+                if(e.keyCode == "32"){
+                    fase = 1; 
+                    fase1();
+                }
+
+            });
+
+            //Função para simular de forma simples a física
+            function isGrounded(){
+
+                //Aqui usamos uma função padrão do THREE js para emular um raio e podermos realizar a verifição de colisão
+                const raycaster = new THREE.Raycaster();
+
+                //Aqui definimos a origem e a direção do raio (Player, para baixo)
+                raycaster.set(sceneObj["player"].position, new THREE.Vector3(0,-1,0));
+
+                //Através dessa variável veremos quais objetos estão abaixo do jogador
+                var intersects = raycaster.intersectObjects(scene.children);
+
+                //Aqui verificamos se existe algum objeto a baixo do jogador, se não existir, definimos que o jogador não está próximo ao chão, e a simulação de física vai fazer o jogador cair 
+                if(intersects.length > 0){
+
+                    //aqui obtemos a distancia do jogador para o objeto que o raio acerta, após isso, arredondadmos para um multiplo de 0.5 (0 - 0.5 - 1 - 1.5)
+                    var dist = arred(intersects[0].distance);
+                    
+                    //se a distancia for igual a 1.5 e o objeto que estiver abaixo for da cor ativa na variável activeLayer ou o objeto abaixo for preto, definimos que o player está no chão, sendo assim, a simulação de física faz com que o jogador nao caia.
+                    if(dist == 1.5 && (intersects[0].object.layer == activeLayer || intersects[0].object.layer == "black")){
+
+                        grounded = true;
+                    
+                    }
+                    //caso o objeto a baixo seja branco significa q o player chegou ao fim do nivel/fase, então o jogador passa de nivel
+                    else if(dist == 1.5 && intersects[0].object.layer == "white"){
+                        
+                        if(game){
+                            console.log("passou de fase");
+                            nextLevel();
+                        }
+                    }
+                    else{
+                        grounded = false;
+                    }
+                }else{
+                    grounded = false;
+
+                    //se não existir nenhum objeto abaixo do jogador e a posição do objeto for menor que -10 no eixo Y, siginifica que o jogador perdeu
+                    if(sceneObj["player"].position.y < -10){
+                        
+                        restartLevel();
+                    }
+
+                }
+            }
+
+
+            //através dessa função, zeramos o setInterval do cronometro e apagamos todos os objetos da cena , menos as luzes
+            function cleanFase(){
+                
+                clearInterval(timerInterval);
+
+                x = sceneObj;
+
+                //percorremos  cada elemento que foi adicionado a cena
+                for(var obj in x){
+                    //caso o item atual não for um array, apagamos o objeto
+                    if(x[obj].length == undefined){
+                        scene.remove(x[obj]);
+
+                    //se for um array, percorremos cada item do array apagando os objetos da cena
+                    }else if(x[obj].length > 0){
+                        x[obj].map((a) => {scene.remove(a)});
+                    }
+                }
+            }
+
+            //Através dessa função reinciamos a fase
+            function restartLevel(){
+
+                //Aqui limpamos a fase
+                cleanFase();
+                //aqui definimos que a lógica de jogo não é pra acontecer
+                game = false;
+
+                //como a unica possibilidade de reiniciar a fase é perder, colocamos um alerta no ecra a avisar para o jogador tentar novamente
+                alert("Você perdeu, tente novamente!");
+
+                //de acordo com qual for a fase atual, chamamos a função que instancia a fase
+                if(fase == 1){
+                    fase1();
+                }else if(fase == 2 ){
+                    fase2();
+                }else{
+                    fase3();
+                }
+            }
+
+
+            //através dessa função passamos para o próximo nível
+            function nextLevel(){
+
+                //aqui incrementamos 1 na fase, para definir que a próxima fase é a atual
+                fase ++;
+
+                //aqui limpamos a fase
+                cleanFase();
+
+                //aqui definimos que a lógica de jogo não é para acontecer
+                game = false;
+
+                //«alerta para o jogador saber que passou de fase, e a próxima fase será exibida
+                alert("Você Passou de fase, continue");
+
+                //aqui carregamos a fase de acordo com qual é a fase atual do jogador
+                if(fase == 2){
+                    fase2();
+                }
+                if(fase == 3){
+                    fase3();
+                }else if(fase >3){
+                    Ending();
+                }
+            }
+
+
+            //Função onde exibimos que o jogador completou os 3 níveis
+            function Ending(){
+                
+                //limpamos a fase
+                cleanFase();
+
+                //dizer  ao jogador que ele conseguiu passar todos os níveis 
+                alert("Você ganhou, parabéns!!");
+                
+                // mensagem para o jogador caso ele queira jogar novamente
+                levelHolder.innerHTML = "Pressione 'Space' para jogar novamente!";
+
+            }
+
+            //através desta função criamos a primeira fase
+            function fase1(){
+
+                //definimos, por garantia, que a fase atual é a 1
+                fase = 1;
+                
+                //limpamos a fase, para caso exista algum objeto em cena ainda
+                cleanFase();
+
+                //fazemos reset  as variáveis de acordo com a necessidade da fase atual
+                steps = 0;
+                time = 0;
+                grounded = true;
+                sceneObj = {blue:[],red:[],green:[],black:[]};
+                playerPos = {
+                    x : 0 ,
+                    z : 0 ,
+                    y : 2
+                };
+                //configuramos a camara para olhar para o local onde o jogador é instanciado nos eixos X e Y
+                camera.lookAt(0,0,0); 
+
+                //instanciamos o jogador, passando o tamanho dele, a layer a que ele pertence, a posição, e o nome. Após instanciar incrementamos o jogador à variável que gere os objetos adicionados a cena
+                sceneObj["player"] = createObj({x:1,y:1,z:1},"player",{x:0,y:2,z:0},"player");
+
+                //Aqui instanciamos os blocos de chão da fase, passamos o tamanho, qual a cor, a posição e o nome. Depois de instanciar, referenciamos adicionando dentro de um array baseado na cor dele, dentro da variável sceneObj
+                sceneObj.blue.push(createObj({x:7,y:1,z:7},"blue",{x:0,y:0,z:0},"blueGround"));
+                sceneObj.blue.push(createObj({x:3,y:1,z:12},"blue",{x:0,y:0,z:9.5},"blueGround"));
+                sceneObj.blue.push(createObj({x:2,y:1,z:3},"blue",{x:2.5,y:0,z:14},"blueGround"));
+                sceneObj.blue.push(createObj({x:5,y:1,z:10},"blue",{x:6,y:0,z:16},"blueGround"));
+                sceneObj.black.push(createObj({x:5,y:1,z:2},"black",{x:6,y:0,z:22},"blackGround"));
+                sceneObj.black.push(createObj({x:3,y:1,z:12},"black",{x:6,y:0,z:29},"blackGround"));
+                sceneObj.black.push(createObj({x:12,y:1,z:3},"black",{x:11.5,y:0,z:33.5},"blackGround"));
+                sceneObj.red.push(createObj({x:6,y:1,z:10},"red",{x:20.5,y:0,z:33.5},"redGround"));
+                sceneObj.red.push(createObj({x:6,y:1,z:5},"red",{x:26.5,y:0,z:33.5},"redGround"));
+                sceneObj.red.push(createObj({x:6,y:1,z:2},"red",{x:32.5,y:0,z:33.5},"redGround"));
+                sceneObj.black.push(createObj({x:3,y:1,z:12},"black",{x:37,y:0,z:38.5},"blackGround"));
+                sceneObj.black.push(createObj({x:12,y:1,z:3},"black",{x:29.5,y:0,z:43},"blackGround"));
+                sceneObj.black.push(createObj({x:3,y:1,z:6},"black",{x:22,y:0,z:44.5},"blackGround"));
+                sceneObj.green.push(createObj({x:18,y:1,z:3},"green",{x:11.5,y:0,z:46},"greenGround"));
+                sceneObj.white = createObj({x:3,y:50,z:3},"white",{x:1,y:-24.5,z:46},"ending");
+
+                //Aqui definimos o indiciador de fase com a fase atual
+                levelHolder.innerHTML = "Fase 1";
+
+                //Aqui chamamos a função para adicionar todos os objetos dentro da variável sceneObj na cena
+                addToScene();
+
+                //Aqui definimos qual a cor ativa atualmente
+                setLayer('blue');
+                
+                //Aqui iniciamos o timer para incrementar um segundo na variável time a cada 1 segundo
+                timerInterval = setInterval(() => timer(),1000);
+
+                //Aqui colocamos um delay para a lógica de jogo voltar a acontecer, esse delay é para evitar bugs de acordo com a velocidade de execução do script
+                setTimeout(() => {game = true},300);
+               
+            }
+
+            //através dessa função criamos a segunda fase
+            function fase2(){
+
+                //confirmamos que a lógica de jogo não é para acontecer
+                game = false;
+                
+                //definimos, por garantia, que a fase atual é a 2
+                fase = 2;
+
+                //limpamos a fase
+                cleanFase();
+
+                //reset as variáveis de acordo com a necessidade da fase atual
+                steps = 0;
+                time = 0;
+                grounded = true;
+                sceneObj = {blue:[],red:[],green:[],black:[]};
+                playerPos = {
+                    x : 0,
+                    z : 0,
+                    y : 20
+                };
+                
+                //configuramos a camara para olhar para o local onde o jogador é instanciado nos eixos X e Y
+                camera.lookAt(0,0,0); 
+
+                //instanciamos o jogador, passando o tamanho dele, a qual layer ele pertence, a posição, e o nome. Após instanciar incrementamos  à variável que gere os objetos adicionados a cena
+               sceneObj["player"] = createObj({x:1,y:1,z:1},"white",{x:0,y:20,z:0},"player");
+
+                //Aqui instanciamos os blocos de chão da fase, passamos o tamanho, qual a cor, a posição e o nome. Depois de instanciar, referenciamos , adicionando dentro de um array baseado na cor dele, dentro da variável sceneObj
+                sceneObj.blue.push(createObj({x:10,y:1,z:10},"blue",{x:0,y:10,z:0},"blueGround"));
+                sceneObj.red.push(createObj({x:10,y:1,z:10},"red",{x:0,y:7,z:10},"redGround"));
+                sceneObj.blue.push(createObj({x:10,y:1,z:10},"blue",{x:0,y:4,z:20},"blueGround"));
+                sceneObj.green.push(createObj({x:10,y:1,z:10},"green",{x:0,y:1,z:30},"greenGround"));
+                sceneObj.green.push(createObj({x:10,y:1,z:10},"green",{x:0,y:-3,z:20},"greenGround"));
+                sceneObj.white = createObj({x:10,y:50,z:10},"white",{x:0,y:-32.5,z:10},"ending");
+                
+                //Aqui definimos o indiciador de fase com a fase atual
+                levelHolder.innerHTML = "Fase 2";
+                
+                //Aqui chamamos a função para adicionar todos os objetos dentro da variável sceneObj na cena
+                addToScene();
+                
+                //Aqui definimos qual a cor ativa atualmente
+               setLayer('blue');
+
+                //Aqui colocamos um delay para a lógica de jogo voltar a acontecer, esse delay é para evitar bugs de acordo com a velocidade de execução do script
+                setTimeout(() => {game = true},300);
+                
+                //Aqui iniciamos o timer para incrementar um segundo na variável time a cada 1 segundo
+                timerInterval = setInterval(() => timer(),1000);
+
+            }
+            
+            function fase3(){
+
+                
+                //definimos, por garantia, que a fase atual é a 3
+                fase = 3;
+
+                
+                //limpamos a fase
+                cleanFase();
+
+                //resetamos as variáveis de acordo com a necessidade da fase atual
+                game = false;
+                steps = 0;
+                time = 0;
+                grounded = true;
+                sceneObj = {blue:[],red:[],green:[],black:[]};
+                playerPos = {
+                    x : 0,
+                    z : 0,
+                    y : 20
+                };
+
+                //configuramos a camara para olhar para o local onde o jogador é instanciado nos eixos X e Y
+                camera.lookAt(0,0,0); 
+
+                //instanciamos o jogador, passando o tamanho dele, a que layer ele pertence, a posição, e o nome. Após instanciar incrementamos o jogador à variável que gerencia os objetos adicionados a cena
+               sceneObj["player"] = createObj({x:1,y:1,z:1},"white",{x:0,y:20,z:0},"player");
+
+                //Aqui instanciamos os blocos de chão da fase, passamos o tamanho, qual a cor, a posição e o nome. Depois de instanciar, referenciamos , adicionando dentro de um array baseado na cor dele, dentro da variável sceneObj
+                sceneObj.red.push(createObj({x:10,y:1,z:2},"red",{x:3,y:10,z:0},"redGround"));
+                sceneObj.red.push(createObj({x:2,y:1,z:10},"red",{x:9,y:10,z:4},"redGround"));
+                sceneObj.black.push(createObj({x:2,y:1,z:2},"black",{x:9,y:10,z:10},"blackGround"));
+                sceneObj.blue.push(createObj({x:8,y:1,z:8},"blue",{x:9,y:10,z:15},"blueGround"));
+                sceneObj.blue.push(createObj({x:15,y:1,z:3},"blue",{x:-2.5,y:10,z:15},"blueGround"));
+                sceneObj.black.push(createObj({x:15,y:1,z:3},"black",{x:20.5,y:10,z:15},"blackGround"));
+                sceneObj.black.push(createObj({x:3,y:1,z:6},"black",{x:29.5,y:10,z:16.5},"blackGround"));
+                sceneObj.green.push(createObj({x:8,y:1,z:8},"green",{x:9,y:0,z:15},"greenGround"));
+                sceneObj.green.push(createObj({x:3,y:1,z:6},"green",{x:9,y:0,z:22},"greenGround"));
+                sceneObj.white = createObj({x:4,y:1,z:4},"white",{x:9,y:-5,z:27},"ending");
+
+                //Aqui definimos o indiciador de fase com a fase atual
+                levelHolder.innerHTML = "Fase 3";
+
+                //Aqui chamamos a função para adicionar todos os objetos dentro da variável sceneObj na cena
+                addToScene();
+
+                //Aqui definimos qual a cor ativa atualmente
+                setLayer('red');
+
+                //Aqui colocamos um delay para a lógica de jogo voltar a acontecer, esse delay é para evitar bugs de acordo com a velocidade de execução do script
+                setTimeout(() => {game = true},300);
+                    
+                //Aqui iniciamos o timer para incrementar um segundo na variável time a cada 1 segundo
+                timerInterval = setInterval(() => timer(),1000);
+
+            }
+
+            //Através desta função adicionamos os objetos a cena
+            function addToScene(){
+                //percorremos por cada objeto que vai ser adicionado em cena
+                for(var obj in sceneObj){
+                    var a = sceneObj[obj];
+                    if(a.length != undefined){
+                        
+                    //caso seja um array, percorremos por cada item do array adicionado à cena  
+                        a.map((item) => {
+                            scene.add(item);
+                        });
+                    }else{
+                    //caso seja a Mesh do THREE js, adicionamos a cena 
+                        scene.add(a);
+                    }
+                }
+            }
+
+
+            //função que controla e atualiza o contador de tempo
+            function timer(){
+                //caso a lógica de jogo esteja ativa, incremetamos 1 ao tempo
+                if(game)
+                    time++;
+
+                //colocamos os minutos, segundos divididos por 60, numa variável auxiliar
+                var min = Math.floor(time/60);
+                //colocamos os segundos, resto da divisão dos segundos por 60, numa variável auxiliar
+                var sec = time%60;
+
+                //adicionamos na div do contador de tempo, quantos minutos e segundos se passaram, caso o número seja menor que 10, adicionamos um 0 à esquerda para ficar melhor esteticamente
+                timerHolder.innerHTML = (min >= 10 ? min.toString() : "0"+min.toString()) + ":" + (sec >= 10 ? sec.toString() : "0"+sec.toString());
+                
+                //caso o player demore mais de 1 minuto para terminar a fase, o jogador perde
+                if(time > 60){
+                    restartLevel();
+                }
+
+            }
+
+            //esta função é chamada frame a frame pelo THREE js
+            function animate() {
+
+                //aqui solicitamos ao THREE js para renderizar a cena a cada frame
+                requestAnimationFrame( animate );
+                renderer.render( scene, camera );
+
+
+                if(game){
+
+                    //caso a lógica de jogo esteja ativa, movemos sempre a camara 20 pontos a frente do player no eixo z, 8 pontos acima do player no eixo Y, e -8 pontos no eixo X
+                    camera.position.z = playerPos.z + 20;
+                    camera.position.y = playerPos.y + 8;
+                    camera.position.x = playerPos.x - 8;
+
+                    //colocamos a camara a olhar para a posição do jogador abaixo 2 pontos no eixo Y
+                    camera.lookAt(playerPos.x,playerPos.y -2 , playerPos.z); 
+
+                    //aqui atualizamos o contador de passos de acordo com quantas vezes pressionaram alguma tecla de movimento
+                    stepsHolder.innerHTML = steps.toString();
+
+                    //aqui chamamos a função que realiza a simulação da física
+                    isGrounded();
+
+                    //aqui atualizamos a posição do objeto jogador,  através da variável sceneObj, na cena
+                    sceneObj["player"].position.set(playerPos.x,playerPos.y,playerPos.z);
+
+                    //caso o jogador não esteja no chão, cai e perde.
+                    if(!grounded){
+                        playerPos.y -= 0.1;
+                    }
+                }
+            }
+            
+            // Cahamar a fase 1, que inicia todo o fluxo de jogo
+            fase1();
+            
+            animate();
+
+        </script>
+	</body>
+</html>
